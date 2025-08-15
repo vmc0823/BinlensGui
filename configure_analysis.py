@@ -3,10 +3,16 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTabWidget, QFormLayout, QComboBox, QSpinBox,
-    QPushButton, QFrame, QSizePolicy, QSpacerItem, QTableView
+    QPushButton, QFrame, QSizePolicy, QSpacerItem, QTableView, QFileDialog, QListWidget, QListWidgetItem, QMessageBox
 )
 from PySide6.QtGui import QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import QHeaderView
+
+import os
+import sys
+from pathlib import Path
+
+LIB_EXTS = {".so", ".dylib", ".dll", ".a", ".lib"} #dynamic + statix libraries
 
 class ConfigureAnalysisWindow(QMainWindow):
     def __init__(self, target_name="cwe_nightmare_x86", entrypoints=None):
@@ -15,15 +21,13 @@ class ConfigureAnalysisWindow(QMainWindow):
         self.setMinimumSize(840, 560)
         self._build_ui(target_name)
         self._apply_styles()
-        if entrypoints:
-            self.set_entrypoints(entrypoints)
-        else:
-            # rows you can remove
-            self.set_entrypoints([
-                {"address": "0x401000", "function": "_start", "file": target_name, "selected": True},
-                {"address": "0x401140", "function": "main",   "file": target_name, "selected": True},
-                {"address": "0x402000", "function": "helper", "file": target_name, "selected": False},
-            ])
+
+        self.set_entrypoints(entrypoints or [
+            {"address": "0x401000", "function": "_start", "file": target_name, "selected": True},
+            {"address": "0x401140", "function": "main",   "file": target_name, "selected": True},
+            {"address": "0x402000", "function": "helper", "file": target_name, "selected": False},
+        ])
+        self.set_shared_search_paths(self._default_search_paths())
 
     #ui
     def _build_ui(self, target_name: str):
@@ -33,9 +37,8 @@ class ConfigureAnalysisWindow(QMainWindow):
         root.setContentsMargins(20, 16, 20, 16)
         root.setSpacing(18)
 
-        # Header (rounded box with the title)
-        header_frame = QFrame()
-        header_frame.setObjectName("headerFrame")
+        # Header 
+        header_frame = QFrame(objectName="headerFrame")
         header_layout = QHBoxLayout(header_frame)
         header_layout.setContentsMargins(16, 12, 16, 12)
         header = QLabel(f"Configure Analysis on <{target_name}>")
@@ -56,90 +59,86 @@ class ConfigureAnalysisWindow(QMainWindow):
         general_layout.setContentsMargins(24, 20, 24, 20)
         form = QFormLayout()
         form.setHorizontalSpacing(24); form.setVerticalSpacing(24)
-
         self.arch_combo = QComboBox()
         self.arch_combo.addItems([
             "x86", "x86_64", "ARM", "AArch64", "MIPS", "RISC-V"
         ])
         self.arch_combo.setCurrentText("ARM")
-
         self.timeout_spin = QSpinBox()
         self.timeout_spin.setRange(1, 240)
         self.timeout_spin.setValue(30)
         self.timeout_spin.setAlignment(Qt.AlignCenter)
-
         form.addRow(QLabel("Instruction Set Architecture:"), self.arch_combo)
         form.addRow(QLabel("Analysis Timeout (Minutes):"), self.timeout_spin)
-
         general_layout.addLayout(form)
         general_layout.addStretch(1)
         self.tabs.addTab(general_tab, "General")
 
-        # Shared Objects tab (placeholder content)
+        # Shared Objects tab
         so_tab = QWidget()
         so_layout = QVBoxLayout(so_tab)
         so_layout.setContentsMargins(24, 20, 24, 20)
-        so_layout.addWidget(QLabel("Add your shared object configuration here."))
-        so_layout.addStretch(1)
+        so_layout.setSpacing(10)
+        desc = QLabel("Add one or more directories containing shared or static libraries required for accurate dynamic analysis.")
+        desc.setWordWrap(True)
+        so_layout.addWidget(desc)
+        label_paths = QLabel("<b>Current Search Paths:</b>")
+        so_layout.addWidget(label_paths)
+        self.paths_list = QListWidget()
+        self.paths_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.paths_list.setMinimumHeight(200)
+        so_layout.addWidget(self.paths_list, 1)
+        
+        # buttons row
+        row = QHBoxLayout()
+        add_btn = QPushButton("+ Add directory", objectName="pillButton")
+        rem_btn = QPushButton("- Remove selected", objectName="pillButton")
+        reset_btn = QPushButton("Reset to System Default", objectName="pillButton")
+        add_btn.clicked.connect(self._on_add_directory)
+        rem_btn.clicked.connect(self._on_remove_selected_paths)
+        reset_btn.clicked.connect(lambda: self.set_shared_search_paths(self._default_search_paths()))
+        row.addWidget(add_btn)
+        row.addWidget(rem_btn)
+        row.addWidget(reset_btn)
+        row.addItem(QSpacerItem(10, 10, QSizePolicy.Expanding, QSizePolicy.Minimum))
+        so_layout.addLayout(row)
         self.tabs.addTab(so_tab, "Shared Objects")
 
-        # Wiring up entrypoints tab
+        # entrypoints tab
         entry_tab = QWidget()
-        entry_layout = QVBoxLayout(entry_tab)
-        entry_layout.setContentsMargins(24, 20, 24, 20)
-        entry_layout.setSpacing(14)
-
-        # buttons row
+        entry_layout = QVBoxLayout(entry_tab); entry_layout.setContentsMargins(24, 20, 24, 20); entry_layout.setSpacing(14)
         btn_row = QHBoxLayout()
         btn_row.addItem(QSpacerItem(10, 10, QSizePolicy.Expanding, QSizePolicy.Minimum))
-        self.btn_select_all = QPushButton("Select All")
-        self.btn_select_default = QPushButton("Select Default")
-        self.btn_select_all.setObjectName("pillButton")
-        self.btn_select_default.setObjectName("pillButton")
-        btn_row.addWidget(self.btn_select_all)
-        btn_row.addWidget(self.btn_select_default)
+        self.btn_select_all = QPushButton("Select All", objectName="pillButton")
+        self.btn_select_default = QPushButton("Select Default", objectName="pillButton")
+        self.btn_select_all.clicked.connect(lambda: self.select_all_entrypoints(True))
+        self.btn_select_default.clicked.connect(self.select_default_entrypoints)
+        btn_row.addWidget(self.btn_select_all); btn_row.addWidget(self.btn_select_default)
         entry_layout.addLayout(btn_row)
-
-        # table
         self.entry_table = QTableView()
         self.entry_table.setAlternatingRowColors(True)
         self.entry_table.setSelectionBehavior(QTableView.SelectRows)
         self.entry_table.setEditTriggers(QTableView.NoEditTriggers)
-
         self.entry_model = QStandardItemModel(0, 4, self)
         self.entry_model.setHorizontalHeaderLabels(["", "Address", "Function", "File"])
         self.entry_table.setModel(self.entry_model)
-
         header = self.entry_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(3, QHeaderView.Stretch)
         header.sectionClicked.connect(self._on_header_clicked)
-
         entry_layout.addWidget(self.entry_table, 1)
         self.tabs.addTab(entry_tab, "Entrypoints")
 
-        # wire buttons
-        self.btn_select_all.clicked.connect(lambda: self.select_all_entrypoints(True))
-        self.btn_select_default.clicked.connect(self.select_default_entrypoints)
-
-        # Footer buttons
+        # Footer
         footer = QHBoxLayout()
         footer.addItem(QSpacerItem(10, 10, QSizePolicy.Expanding, QSizePolicy.Minimum))
-
-        self.back_btn = QPushButton("Back")
-        self.back_btn.setObjectName("secondaryButton")
-        self.back_btn.clicked.connect(self.on_back)
-
-        self.start_btn = QPushButton("Start")
-        self.start_btn.setObjectName("primaryButton")
-        self.start_btn.setDefault(True)
-        self.start_btn.clicked.connect(self.on_start)
-
-        footer.addWidget(self.back_btn)
-        footer.addWidget(self.start_btn)
+        self.back_btn = QPushButton("Back", objectName="secondaryButton"); self.back_btn.clicked.connect(self.on_back)
+        self.start_btn = QPushButton("Start", objectName="primaryButton"); self.start_btn.setDefault(True); self.start_btn.clicked.connect(self.on_start)
+        footer.addWidget(self.back_btn); footer.addWidget(self.start_btn)
         root.addLayout(footer)
+
 
     # Styles
     def _apply_styles(self):
@@ -214,6 +213,89 @@ class ConfigureAnalysisWindow(QMainWindow):
                 gridline-color: #2C2C2C; }
         """)
 
+    #shared objects logic
+    def _on_add_directory(self):
+        dlg = QFileDialog(self, "Add library directory")
+        dlg.setFileMode(QFileDialog.Directory)
+        dlg.setOption(QFileDialog.ShowDirsOnly, True)
+        dlg.setOption(QFileDialog.DontUseNativeDialog, True)  # allows multi-select
+        if dlg.exec():
+            dirs = [Path(p) for p in dlg.selectedFiles()]
+            to_add = []
+            for d in dirs:
+                if not d.exists():
+                    continue
+                if not self._dir_contains_libs(d):
+                    # Warn but still allow adding (some users keep symlinked trees)
+                    ans = QMessageBox.question(
+                        self, "No libraries detected",
+                        f"'{d}' does not appear to contain typical library files ({', '.join(sorted(LIB_EXTS))}).\nAdd anyway?",
+                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                    )
+                    if ans != QMessageBox.Yes:
+                        continue
+                to_add.append(str(d))
+            self._append_unique_paths(to_add)
+
+
+    def _dir_contains_libs(self, directory: Path) -> bool:
+        try:
+            for child in directory.iterdir():
+                if child.is_file() and child.suffix.lower() in LIB_EXTS:
+                    return True
+        except Exception:
+            pass
+        return False
+    
+    def _append_unique_paths(self, paths):
+        current = set(self.get_shared_search_paths())
+        for p in paths:
+            norm = os.path.normpath(p)
+            if norm in current:
+                continue
+            item = QListWidgetItem(norm)
+            self.paths_list.addItem(item)
+            current.add(norm) 
+
+    def _on_remove_selected_paths(self):
+        for item in self.paths_list.selectedItems():
+            row = self.paths_list.row(item)
+            self.paths_list.takeItem(row)
+
+    def _default_search_paths(self):
+        paths = []
+        if sys.platform.startswith("linux"):
+            paths += ["/lib", "/lib64", "/usr/lib", "/usr/lib64", "/usr/local/lib", "/usr/local/lib64"]
+            paths += os.environ.get("LD_LIBRARY_PATH", "").split(":")
+        elif sys.platform == "darwin":
+            paths += ["/usr/lib", "/usr/local/lib", "/opt/homebrew/lib", "/opt/local/lib"]
+            paths += os.environ.get("DYLD_LIBRARY_PATH", "").split(":")
+        elif sys.platform.startswith("win"):
+            sysroot = os.environ.get("SystemRoot", r"C:\Windows")
+            paths += [os.path.join(sysroot, "System32"), os.path.join(sysroot, "SysWOW64")]
+            paths += os.environ.get("PATH", "").split(";")
+        # dedupe & existing only
+        cleaned = []
+        seen = set()
+        for p in paths:
+            if not p:
+                continue
+            n = os.path.normpath(p)
+            if n in seen or not os.path.exists(n):
+                continue
+            seen.add(n); cleaned.append(n)
+        return cleaned
+
+    def set_shared_search_paths(self, paths):
+        self.paths_list.clear()
+        self._append_unique_paths(paths)
+
+    def get_shared_search_paths(self):
+        return [self.paths_list.item(i).text() for i in range(self.paths_list.count())]
+
+
+
+
     def set_entrypoints(self, rows):
         """
         rows: list of dicts with keys: address(str), function(str), file(str), selected(bool)
@@ -224,21 +306,17 @@ class ConfigureAnalysisWindow(QMainWindow):
             chk.setCheckable(True)
             chk.setEditable(False)
             chk.setCheckState(Qt.Checked if r.get("selected") else Qt.Unchecked)
-
             addr = QStandardItem(r.get("address", ""))
             func = QStandardItem(r.get("function", ""))
             src  = QStandardItem(r.get("file", ""))
 
             # Make data non-editable but selectable
-            for it in (addr, func, src):
-                it.setEditable(False)
-
+            for it in (addr, func, src): it.setEditable(False)
             self.entry_model.appendRow([chk, addr, func, src])
 
     def _on_header_clicked(self, section):
         if section != 0:
             return
-        # Toggle all checkboxes when first header clicked
         any_unchecked = any(
             self.entry_model.item(row, 0).checkState() != Qt.Checked
             for row in range(self.entry_model.rowCount())
@@ -289,12 +367,12 @@ class ConfigureAnalysisWindow(QMainWindow):
             "architecture": self.arch_combo.currentText(),
             "timeout_minutes": self.timeout_spin.value(),
             "active_tab": self.tabs.tabText(self.tabs.currentIndex()),
-            "entrypoints": self.get_selected_entrypoints()
+            "entrypoints": self.get_selected_entrypoints(),
+            "lib_search_paths": self.get_shared_search_paths(),
         }
 
 if __name__ == "__main__":
-    import sys
     app = QApplication(sys.argv)
-    w = ConfigureAnalysisWindow("cwe_nightmare_x86")
+    w = ConfigureAnalysisWindow("filename")
     w.show()
     sys.exit(app.exec())

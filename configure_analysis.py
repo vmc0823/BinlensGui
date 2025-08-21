@@ -3,16 +3,17 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTabWidget, QFormLayout, QComboBox, QSpinBox,
-    QPushButton, QFrame, QSizePolicy, QSpacerItem, QTableView, QFileDialog, QListWidget, QListWidgetItem, QMessageBox
+    QPushButton, QFrame, QSizePolicy, QSpacerItem, QTableView, 
+    QFileDialog, QListWidget, QListWidgetItem, QMessageBox, QHeaderView,
+    QInputDialog, QAbstractItemView
 )
 from PySide6.QtGui import QStandardItemModel, QStandardItem
-from PySide6.QtWidgets import QHeaderView
 
 import os
 import sys
 from pathlib import Path
 
-LIB_EXTS = {".so", ".dylib", ".dll", ".a", ".lib"} #dynamic + statix libraries
+LIB_EXTS = {".so", ".dylib", ".dll", ".a", ".lib"} #dynamic + static libraries
 
 class ConfigureAnalysisWindow(QMainWindow):
     def __init__(self, target_name="cwe_nightmare_x86", entrypoints=None):
@@ -28,6 +29,7 @@ class ConfigureAnalysisWindow(QMainWindow):
             {"address": "0x402000", "function": "helper", "file": target_name, "selected": False},
         ])
         self.set_shared_search_paths(self._default_search_paths())
+        self.max_args_spin.setValue(5)
 
     #ui
     def _build_ui(self, target_name: str):
@@ -130,6 +132,32 @@ class ConfigureAnalysisWindow(QMainWindow):
         header.sectionClicked.connect(self._on_header_clicked)
         entry_layout.addWidget(self.entry_table, 1)
         self.tabs.addTab(entry_tab, "Entrypoints")
+
+        #advanced tab
+        adv_tab = QWidget()
+        av = QVBoxLayout(adv_tab); av.setContentsMargins(24, 20, 24, 20); av.setSpacing(12)
+        header = QLabel("<b>Command-Line Arguments</b>")
+        av.addWidget(header)
+        info = QLabel("ℹ️  Set the maximum number of arguments the program can accept.")
+        info.setWordWrap(True)
+        av.addWidget(info)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Max Number of Arguments:"))
+        self.max_args_spin = QSpinBox()
+        self.max_args_spin.setRange(0, 64)  # tweak as needed
+        self.max_args_spin.setAlignment(Qt.AlignCenter)
+        row.addWidget(self.max_args_spin, 0, Qt.AlignLeft)
+        row.addItem(QSpacerItem(10, 10, QSizePolicy.Expanding, QSizePolicy.Minimum))
+        av.addLayout(row)
+        av.addWidget(QLabel("Argument Patterns:"))
+        self.arg_list = QListWidget()
+        self.arg_list.setMinimumHeight(150)
+        self.arg_list.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)  # allow inline edit
+        av.addWidget(self.arg_list)
+        add_arg_btn = QPushButton("+ Add Arg Pattern")
+        add_arg_btn.clicked.connect(self._on_add_arg_pattern)
+        av.addWidget(add_arg_btn, 0, Qt.AlignLeft)
+        self.tabs.addTab(adv_tab, "Advanced")
 
         # Footer
         footer = QHBoxLayout()
@@ -294,8 +322,6 @@ class ConfigureAnalysisWindow(QMainWindow):
         return [self.paths_list.item(i).text() for i in range(self.paths_list.count())]
 
 
-
-
     def set_entrypoints(self, rows):
         """
         rows: list of dicts with keys: address(str), function(str), file(str), selected(bool)
@@ -352,6 +378,17 @@ class ConfigureAnalysisWindow(QMainWindow):
                     "file":     self.entry_model.item(row, 3).text(),
                 })
         return out
+    
+    def _on_add_arg_pattern(self):
+        text, ok = QInputDialog.getText(
+            self, "Add Argument Pattern",
+            "Pattern (e.g. -i {file} --count {int}):"
+        )
+        if ok and text.strip():
+            self.arg_list.addItem(text.strip())
+
+    def get_arg_patterns(self):
+        return [self.arg_list.item(i).text() for i in range(self.arg_list.count())]
 
     # Behavior
     def on_back(self):

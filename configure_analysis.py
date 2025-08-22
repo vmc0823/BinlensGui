@@ -52,7 +52,8 @@ class ConfigureAnalysisWindow(QMainWindow):
         root.addWidget(header_frame)
 
         # Tabs
-        self.tabs = QTabWidget(documentMode=True)
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         root.addWidget(self.tabs, 1)
 
         # General tab
@@ -406,10 +407,6 @@ class ConfigureAnalysisWindow(QMainWindow):
             "active_tab": self.tabs.tabText(self.tabs.currentIndex()),
             "entrypoints": self.get_selected_entrypoints(),
             "lib_search_paths": self.get_shared_search_paths(),
+            "max_cli_args": self.max_args_spin.value(),   
+            "arg_patterns": self.get_arg_patterns(),
         }
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    w = ConfigureAnalysisWindow("filename")
-    w.show()
-    sys.exit(app.exec())

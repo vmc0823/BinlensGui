@@ -6,7 +6,7 @@ def main(target_name="cwe_nightmare_x86"):
     app = QApplication(sys.argv)
     win = ConfigureAnalysisWindow(target_name)
 
-    # Optional: handle Start outside the window
+    #handle start outside the window (optional)
     def on_start_clicked():
         cfg = win.get_config()
         print("Starting analysis with:", cfg)
@@ -20,7 +20,6 @@ def main(target_name="cwe_nightmare_x86"):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--target", default="cwe_nightmare_x86",
-                        help="Binary/project name to show in the header")
+    parser.add_argument("--target", default="cwe_nightmare_x86", help="Binary/project name to show in the header")
     args = parser.parse_args()
     main(args.target)

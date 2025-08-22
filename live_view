@@ -1,0 +1,38 @@
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
+    QCheckBox, QTabWidget, QTableWidget, QTableWidgetItem, QPlainTextEdit,
+    QGroupBox, QGridLayout, QPushButton, QSizePolicy, QFrame, QProgressBar
+)
+import json
+import sys
+from datetime import datetime
+
+class CategoryCard(QFrame):
+    clicked = Signal(str)
+
+    def __init__(self, name: str, count: int = 0, parent=None):
+        super().__init__(parent)
+        self._name = name
+        self._count = count
+        self.setObjectName("CategoryCard")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(14, 10, 14, 12)
+        lay.setSpacing(4)
+        self.title = QLabel()
+        self.title.setAlignment(Qt.AlignCenter)
+        self._refresh()
+        lay.addWidget(self.title)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mouseReleaseEvent(self, e):
+        self.clicked.emit(self._name)
+        return super().mouseReleaseEvent(e)
+
+    def set_count(self, n: int):
+        self._count = n
+        self._refresh()
+
+    def _refresh(self):
+        self.title.setText(f"<b>{self._name}</b> ({self._count})")

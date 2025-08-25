@@ -36,3 +36,144 @@ class CategoryCard(QFrame):
 
     def _refresh(self):
         self.title.setText(f"<b>{self._name}</b> ({self._count})")
+
+
+class AnalysisLiveWidget(QWidget):
+    def __init__(self, filename: str = "filename", parent=None):
+        super().__init__(parent)
+        self.filename = filename
+        self._categories_detected = {}      # name -> count
+        self._categories_not_detected = {}  # name -> count (for completeness)
+        self._build_ui()
+        self._apply_styles()
+
+    #public API
+    def set_running(self, running: bool):
+        self.status_header.setText(f"<b>{'Analyzing' if running else 'Paused'} &lt;{self.filename}&gt;</b>")
+        self.busy.setVisible(running)  # show/hide the busy bar
+        self._set_pill("Running" if running else "Paused",
+                       "#2ecc71" if running else "#f39c12")
+
+    def mark_complete(self, message: str = "Analysis complete."):
+        """Call when your analysis engine finishes."""
+        self.set_status_line(message)
+        self.busy.hide()
+        self._set_pill("Complete", "#95a5a6") 
+
+    def set_status_line(self, text: str):
+        self.status_line.setText(text)
+
+    def set_config_preview(self, cfg: dict):
+        import json as _json  # local import to avoid top-level coupling
+        self.cfg_edit.setPlainText(_json.dumps(cfg, indent=2))
+
+    def append_cli_output(self, text: str):
+        self.cli_edit.appendPlainText(text)
+
+    def append_log(self, severity: str, message: str, ts=None):
+        from datetime import datetime as _dt
+        import sys as _sys
+        ts = ts or _dt.now()
+        row = self.log_table.rowCount()
+        self.log_table.insertRow(row)
+        fmt = "%-I:%M:%S %p" if _sys.platform != "win32" else "%I:%M:%S %p"
+        self.log_table.setItem(row, 0, QTableWidgetItem(ts.strftime(fmt)))
+        self.log_table.setItem(row, 1, QTableWidgetItem(f"[{severity.upper()}]"))
+        self.log_table.setItem(row, 2, QTableWidgetItem(message))
+        self.log_table.scrollToBottom()
+
+    def bump_category(self, name: str, detected: bool = True, by: int = 1):
+        store = self._categories_detected if detected else self._categories_not_detected
+        store[name] = store.get(name, 0) + by
+        self._rebuild_category_grid()
+
+    #ui
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(10, 8, 10, 10)
+        root.setSpacing(8)
+
+        #top title
+        self.status_header = QLabel(f"<b>Analyzing &lt;{self.filename}&gt;</b>")
+        self.status_header.setAlignment(Qt.AlignCenter)
+        title_font = QFont()
+        title_font.setPointSize(12)
+        self.status_header.setFont(title_font)
+        root.addWidget(self.status_header)
+
+        #pplit left (status/logs) | right (vulns)
+        split = QSplitter(Qt.Horizontal)
+        root.addWidget(split, 1)
+
+        #left side
+        left = QWidget()
+        lv = QVBoxLayout(left)
+        lv.setContentsMargins(8, 8, 8, 8)
+        lv.setSpacing(10)
+
+        #analysis Status box
+        status_box = QGroupBox()
+        sb = QVBoxLayout(status_box)
+        sb.setContentsMargins(12, 12, 12, 12)
+
+        #status text line
+        self.status_line = QLabel("Analysis Status (runtime, states explored…)")
+        self.status_line.setAlignment(Qt.AlignCenter)
+
+        #centered status pill row
+        switch_row = QHBoxLayout()
+        switch_row.addStretch(1)
+        self.status_pill = QLabel()
+        self.status_pill.setObjectName("StatusPill")
+        self._set_pill("Running", "#2ecc71")  # initial
+        switch_row.addWidget(self.status_pill)
+        switch_row.addStretch(1)
+
+        #indeterminate busy bar
+        self.busy = QProgressBar()
+        self.busy.setRange(0, 0)   # indeterminate
+        self.busy.setFixedHeight(6)
+
+        sb.addWidget(self.status_line)
+        sb.addLayout(switch_row)
+        sb.addWidget(self.busy)
+
+        lv.addWidget(status_box)
+
+        #tabs (Logs / Config / CLI)
+        self.tabs = QTabWidget()
+        #logs tab
+        logs = QWidget()
+        ll = QVBoxLayout(logs)
+        self.log_table = QTableWidget(0, 3)
+        self.log_table.setHorizontalHeaderLabels(["Timestamp", "Severity", "Message"])
+        self.log_table.horizontalHeader().setStretchLastSection(True)
+        self.log_table.setSelectionMode(QTableWidget.NoSelection)
+        self.log_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        ll.addWidget(self.log_table)
+        self.tabs.addTab(logs, "Logs")
+
+        #config tab
+        cfg = QWidget()
+        cl = QVBoxLayout(cfg)
+        self.cfg_edit = QPlainTextEdit(readOnly=True)
+        self.cfg_edit.setPlaceholderText("Configuration used for this run will appear here…")
+        cl.addWidget(self.cfg_edit)
+        self.tabs.addTab(cfg, "Config")
+
+        # CLI tab
+        cli = QWidget()
+        cil = QVBoxLayout(cli)
+        self.cli_edit = QPlainTextEdit(readOnly=True)
+        self.cli_edit.setPlaceholderText("$ analysis-engine --args ...\n(streamed output)")
+        cil.addWidget(self.cli_edit)
+        self.tabs.addTab(cli, "CLI")
+
+        lv.addWidget(self.tabs, 1)
+        split.addWidget(left)
+
+        #right side (vulnerabilities)
+        right = QWidget()
+        rv = QVBoxLayout(right)
+        rv.setContentsMargins(8, 8, 8, 8)
+        rv.setSpacing(8)

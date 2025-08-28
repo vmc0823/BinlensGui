@@ -58,7 +58,7 @@ class AnalysisLiveWidget(QWidget):
         """Call when your analysis engine finishes."""
         self.set_status_line(message)
         self.busy.hide()
-        self._set_pill("Complete", "#95a5a6") 
+        self._set_pill("Complete", "#95a5a6")  
 
     def set_status_line(self, text: str):
         self.status_line.setText(text)
@@ -177,3 +177,79 @@ class AnalysisLiveWidget(QWidget):
         rv = QVBoxLayout(right)
         rv.setContentsMargins(8, 8, 8, 8)
         rv.setSpacing(8)
+
+        #detected section
+        self.detected_box = QGroupBox("Vulnerabilities Detected (0)")
+        db = QVBoxLayout(self.detected_box)
+        self.detected_grid = QGridLayout()
+        self.detected_grid.setHorizontalSpacing(10)
+        self.detected_grid.setVerticalSpacing(10)
+        db.addLayout(self.detected_grid)
+        rv.addWidget(self.detected_box, 1)
+
+        #not detected section
+        self.notdet_box = QGroupBox("Vulnerabilities Not Detected (0)")
+        nb = QVBoxLayout(self.notdet_box)
+        self.notdet_grid = QGridLayout()
+        self.notdet_grid.setHorizontalSpacing(10)
+        self.notdet_grid.setVerticalSpacing(10)
+        nb.addLayout(self.notdet_grid)
+        rv.addWidget(self.notdet_box, 1)
+
+        split.addWidget(right)
+        split.setSizes([650, 500])
+
+    def _apply_styles(self):
+        self.setStyleSheet("""
+            QGroupBox { border: 1px solid #BDBDBD; border-radius: 10px; padding: 10px; }
+            #CategoryCard { border: 1px solid #9AA0A6; border-radius: 12px; background: #FFFFFF; }
+            #CategoryCard:hover { background: #F5F7FF; }
+            #StatusPill { border-radius: 12px; padding: 4px 14px; color: white; font-weight: 600; }
+        """)
+
+    def _set_pill(self, text: str, color: str):
+        """Update the read-only status pill."""
+        self.status_pill.setText(text)
+        self.status_pill.setAlignment(Qt.AlignCenter)
+        # color is dynamic; base style lives in _apply_styles
+        self.status_pill.setStyleSheet(
+            f"#StatusPill {{ padding: 4px 14px; border-radius: 12px; "
+            f"color: white; background: {color}; font-weight: 600; }}"
+        )
+
+    def _rebuild_category_grid(self):
+        #detected
+        for i in reversed(range(self.detected_grid.count())):
+            w = self.detected_grid.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+        #not detected
+        for i in reversed(range(self.notdet_grid.count())):
+            w = self.notdet_grid.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+
+        #build cards
+        def populate(grid, store):
+            r = c = 0
+            for name, cnt in sorted(store.items()):
+                card = CategoryCard(name, cnt)
+                card.clicked.connect(lambda n=name: print(f"[UI] clicked category {n}"))
+                grid.addWidget(card, r, c)
+                c += 1
+                if c == 2: 
+                    c = 0
+                    r += 1
+
+        populate(self.detected_grid, self._categories_detected)
+        populate(self.notdet_grid, self._categories_not_detected)
+
+        self.detected_box.setTitle(f"Vulnerabilities Detected ({sum(self._categories_detected.values())})")
+        self.notdet_box.setTitle(f"Vulnerabilities Not Detected ({sum(self._categories_not_detected.values())})")
+
+#quick run
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    w = AnalysisLiveWidget("sample.bin")
+    w.show()
+    sys.exit(app.exec())    

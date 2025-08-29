@@ -1,9 +1,9 @@
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
     QCheckBox, QTabWidget, QTableWidget, QTableWidgetItem, QPlainTextEdit,
-    QGroupBox, QGridLayout, QPushButton, QSizePolicy, QFrame, QProgressBar
+    QGroupBox, QGridLayout, QFrame, QProgressBar
 )
 import json
 import sys
@@ -39,52 +39,96 @@ class CategoryCard(QFrame):
 
 
 class AnalysisLiveWidget(QWidget):
+    _TITLE_PT = 12
+    _GRID_COLS = 2
+    _BUSY_HEIGHT = 6
+
+    categoryClicked = Signal(str)
+
     def __init__(self, filename: str = "filename", parent=None):
         super().__init__(parent)
         self.filename = filename
-        self._categories_detected = {}      # name -> count
-        self._categories_not_detected = {}  # name -> count (for completeness)
+        self._categories_detected = {}      
+        self._categories_not_detected = {} 
+        self._cards_det = {}
+        self._cards_not = {}
         self._build_ui()
         self._apply_styles()
 
     #public API
     def set_running(self, running: bool):
-        self.status_header.setText(f"<b>{'Analyzing' if running else 'Paused'} &lt;{self.filename}&gt;</b>")
-        self.busy.setVisible(running)  # show/hide the busy bar
-        self._set_pill("Running" if running else "Paused",
-                       "#2ecc71" if running else "#f39c12")
+        self._set_state(
+            title="Analyzing" if running else "Paused",
+            pill_text="Running" if running else "Paused",
+            pill_color="#2ecc71" if running else "#f39c12",
+            busy=running,
+        )
 
     def mark_complete(self, message: str = "Analysis complete."):
         """Call when your analysis engine finishes."""
         self.set_status_line(message)
-        self.busy.hide()
-        self._set_pill("Complete", "#95a5a6")  
+        self._set_state(
+            title="Complete",
+            pill_text="Complete",
+            pill_color="#95a5a6",
+            busy=False,
+        )
 
     def set_status_line(self, text: str):
         self.status_line.setText(text)
 
     def set_config_preview(self, cfg: dict):
-        import json as _json  # local import to avoid top-level coupling
-        self.cfg_edit.setPlainText(_json.dumps(cfg, indent=2))
+        self.cfg_edit.setPlainText(json.dumps(cfg, indent=2))
 
     def append_cli_output(self, text: str):
         self.cli_edit.appendPlainText(text)
 
-    def append_log(self, severity: str, message: str, ts=None):
-        from datetime import datetime as _dt
-        import sys as _sys
-        ts = ts or _dt.now()
+    def append_log(self, severity: str, message: str, ts: datetime | None = None, *, max_rows: int | None = 2000):
+        ts = ts or datetime.now()
         row = self.log_table.rowCount()
+        if max_rows is not None and row >= max_rows:
+            self.log_table.removeRow(0)
+            row -= 1
         self.log_table.insertRow(row)
-        fmt = "%-I:%M:%S %p" if _sys.platform != "win32" else "%I:%M:%S %p"
-        self.log_table.setItem(row, 0, QTableWidgetItem(ts.strftime(fmt)))
+        self.log_table.setItem(row, 0, QTableWidgetItem(ts.strftime(self._time_fmt())))
         self.log_table.setItem(row, 1, QTableWidgetItem(f"[{severity.upper()}]"))
         self.log_table.setItem(row, 2, QTableWidgetItem(message))
         self.log_table.scrollToBottom()
 
     def bump_category(self, name: str, detected: bool = True, by: int = 1):
         store = self._categories_detected if detected else self._categories_not_detected
+        cards = self._cards_det if detected else self._cards_not
+        grid = self.detected_grid if detected else self.notdet_grid
+
         store[name] = store.get(name, 0) + by
+
+        if name in cards:
+            cards[name].set_count(store[name])
+        else:
+            # add a new card at next row/col
+            r, c = divmod(len(cards), self._GRID_COLS)
+            card = CategoryCard(name, store[name])
+            card.clicked.connect(self.categoryClicked)
+            grid.addWidget(card, r, c)
+            cards[name] = card
+
+        self.detected_box.setTitle(f"Vulnerabilities Detected ({sum(self._categories_detected.values())})")
+        self.notdet_box.setTitle(f"Vulnerabilities Not Detected ({sum(self._categories_not_detected.values())})")
+
+    def clear_categories(self):
+        """Clear all categories and UI cards."""
+        self._categories_detected.clear()
+        self._categories_not_detected.clear()
+        self._cards_det.clear()
+        self._cards_not.clear()
+        self._rebuild_category_grid()
+
+    def set_categories(self, detected: dict | None = None, not_detected: dict | None = None):
+        """Bulk set categories; rebuilds the grids."""
+        if detected is not None:
+            self._categories_detected = dict(detected)
+        if not_detected is not None:
+            self._categories_not_detected = dict(not_detected)
         self._rebuild_category_grid()
 
     #ui
@@ -94,14 +138,15 @@ class AnalysisLiveWidget(QWidget):
         root.setSpacing(8)
 
         #top title
-        self.status_header = QLabel(f"<b>Analyzing &lt;{self.filename}&gt;</b>")
+        self.status_header = QLabel()
         self.status_header.setAlignment(Qt.AlignCenter)
         title_font = QFont()
-        title_font.setPointSize(12)
+        title_font.setPointSize(self._TITLE_PT)
         self.status_header.setFont(title_font)
+        self._set_title("Analyzing")
         root.addWidget(self.status_header)
 
-        #pplit left (status/logs) | right (vulns)
+        #split left (status/logs) | right (vulns)
         split = QSplitter(Qt.Horizontal)
         root.addWidget(split, 1)
 
@@ -121,23 +166,22 @@ class AnalysisLiveWidget(QWidget):
         self.status_line.setAlignment(Qt.AlignCenter)
 
         #centered status pill row
-        switch_row = QHBoxLayout()
-        switch_row.addStretch(1)
+        pill_row = QHBoxLayout()
+        pill_row.addStretch(1)
         self.status_pill = QLabel()
         self.status_pill.setObjectName("StatusPill")
         self._set_pill("Running", "#2ecc71")  # initial
-        switch_row.addWidget(self.status_pill)
-        switch_row.addStretch(1)
+        pill_row.addWidget(self.status_pill)
+        pill_row.addStretch(1)
 
         #indeterminate busy bar
         self.busy = QProgressBar()
         self.busy.setRange(0, 0)   # indeterminate
-        self.busy.setFixedHeight(6)
+        self.busy.setFixedHeight(self._BUSY_HEIGHT)
 
         sb.addWidget(self.status_line)
-        sb.addLayout(switch_row)
+        sb.addLayout(pill_row)
         sb.addWidget(self.busy)
-
         lv.addWidget(status_box)
 
         #tabs (Logs / Config / CLI)
@@ -207,42 +251,55 @@ class AnalysisLiveWidget(QWidget):
             #StatusPill { border-radius: 12px; padding: 4px 14px; color: white; font-weight: 600; }
         """)
 
+    #helpers
     def _set_pill(self, text: str, color: str):
         """Update the read-only status pill."""
         self.status_pill.setText(text)
         self.status_pill.setAlignment(Qt.AlignCenter)
-        # color is dynamic; base style lives in _apply_styles
         self.status_pill.setStyleSheet(
             f"#StatusPill {{ padding: 4px 14px; border-radius: 12px; "
             f"color: white; background: {color}; font-weight: 600; }}"
         )
 
-    def _rebuild_category_grid(self):
-        #detected
-        for i in reversed(range(self.detected_grid.count())):
-            w = self.detected_grid.itemAt(i).widget()
-            if w:
-                w.setParent(None)
-        #not detected
-        for i in reversed(range(self.notdet_grid.count())):
-            w = self.notdet_grid.itemAt(i).widget()
+    def _set_title(self, prefix: str):
+        self.status_header.setText(f"<b>{prefix} &lt;{self.filename}&gt;</b>")
+
+    def _time_fmt(self) -> str:
+        # centralize platform format logic
+        return "%-I:%M:%S %p" if sys.platform != "win32" else "%I:%M:%S %p"
+
+    def _clear_layout(self, layout):
+        # Remove widgets but keep the layout instance
+        for i in reversed(range(layout.count())):
+            w = layout.itemAt(i).widget()
             if w:
                 w.setParent(None)
 
+    def _set_state(self, *, title: str, pill_text: str, pill_color: str, busy: bool):
+        self._set_title(title)
+        self._set_pill(pill_text, pill_color)
+        self.busy.setVisible(busy)
+
+    def _rebuild_category_grid(self):
+        self._clear_layout(self.detected_grid)
+        self._clear_layout(self.notdet_grid)
+        self._cards_det.clear()
+        self._cards_not.clear()
+
         #build cards
-        def populate(grid, store):
+        def populate(grid, store, card_map):
             r = c = 0
             for name, cnt in sorted(store.items()):
                 card = CategoryCard(name, cnt)
-                card.clicked.connect(lambda n=name: print(f"[UI] clicked category {n}"))
+                card.clicked.connect(self.categoryClicked)
                 grid.addWidget(card, r, c)
                 c += 1
-                if c == 2: 
+                if c == self._GRID_COLS: 
                     c = 0
                     r += 1
 
-        populate(self.detected_grid, self._categories_detected)
-        populate(self.notdet_grid, self._categories_not_detected)
+        populate(self.detected_grid, self._categories_detected, self._cards_det)
+        populate(self.notdet_grid, self._categories_not_detected, self._cards_not)
 
         self.detected_box.setTitle(f"Vulnerabilities Detected ({sum(self._categories_detected.values())})")
         self.notdet_box.setTitle(f"Vulnerabilities Not Detected ({sum(self._categories_not_detected.values())})")
@@ -251,5 +308,10 @@ class AnalysisLiveWidget(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     w = AnalysisLiveWidget("sample.bin")
+    w.set_running(True)
+    w.set_config_preview({"arch": "ARM", "timeout_min": 30, "entrypoints": ["_start", "main"]})
+    w.bump_category("Category 1", detected=True)
+    w.bump_category("Category 2", detected=True, by=2)
+    w.bump_category("Category X", detected=False)
     w.show()
-    sys.exit(app.exec())    
+    sys.exit(app.exec())  

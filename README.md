@@ -2,10 +2,6 @@
 
 BinLens is a PySide6 desktop app for **configuring, running, and monitoring** binary analyses—built entirely in code (no Qt Designer). It gives you a smooth workflow from selecting entrypoints and library paths to watching live logs and vulnerability categories as the analysis progresses.
 
-<p align="center">
-  <img src="docs/screenshots/dashboard.png" alt="BinLens Dashboard" width="75%" />
-</p>
-
 ---
 
 ## Highlights

@@ -1,3 +1,23 @@
+"""
+It defines :class:`ConfigureAnalysisWindow`, a multi-tab window that lets
+users configure analysis parameters before running the engine.
+Tabs:
+    - **General**: ISA/Architecture, analysis timeout (minutes).
+    - **Shared Objects**: Library search paths for dynamic/static libs (.so/.dylib/.dll/.a/.lib).
+    - **Entrypoints**: Candidate entry functions with checkboxes; includes 'Select All'
+      and 'Select Default' helpers (e.g., `_start`, `main`, `DllMain`, ...).
+    - **Advanced**: Max number of CLI arguments and user-defined argument patterns.
+
+Public API:
+    - :meth:`get_config` → dict with all settings.
+    - :meth:`set_entrypoints`, :meth:`get_selected_entrypoints`
+    - :meth:`set_shared_search_paths`, :meth:`get_shared_search_paths`
+
+Notes:
+    - This class is a QMainWindow to keep a consistent top-level frame
+
+"""
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -12,10 +32,26 @@ from PySide6.QtGui import QStandardItemModel, QStandardItem
 import os
 import sys
 from pathlib import Path
+from typing import Iterable, List, Dict, Any
 
 LIB_EXTS = {".so", ".dylib", ".dll", ".a", ".lib"} #dynamic + static libraries
 
 class ConfigureAnalysisWindow(QMainWindow):
+    """
+    Args:
+        target_name: Display name for the binary/project (shown in the header).
+        entrypoints: Optional initial table rows:
+            Each row is a dict with keys:
+                - "address": str (e.g., "0x401000")
+                - "function": str (e.g., "main")
+                - "file": str (source module/binary)
+                - "selected": bool (checkbox state)
+
+    Attributes:
+        tabs: The main QTabWidget.
+        start_btn: The **Start** QPushButton; connect this in your controller.
+        back_btn: The **Back** QPushButton; closes the window by default.
+    """
     def __init__(self, target_name="cwe_nightmare_x86", entrypoints=None):
         super().__init__()
         self.setWindowTitle("Configure Analysis")
@@ -32,7 +68,8 @@ class ConfigureAnalysisWindow(QMainWindow):
         self.max_args_spin.setValue(5)
 
     #ui
-    def _build_ui(self, target_name: str):
+    """Builds all widgets and layouts"""
+    def _build_ui(self, target_name: str) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
@@ -170,7 +207,8 @@ class ConfigureAnalysisWindow(QMainWindow):
 
 
     # Styles
-    def _apply_styles(self):
+    def _apply_styles(self) -> None:
+        """Applies a light stylesheet to keep the window consistent with your mockups."""
         self.setStyleSheet("""
             #headerFrame {
                 background: white;
@@ -243,7 +281,14 @@ class ConfigureAnalysisWindow(QMainWindow):
         """)
 
     #shared objects logic
-    def _on_add_directory(self):
+    def _on_add_directory(self) -> None:
+        """Open a directory chooser and append valid library paths to the list.
+
+        Behavior:
+            - Allows selecting multiple directories (non-native dialog).
+            - Warns if a directory appears to contain no typical library files,
+              but still allows adding by user choice.
+              """
         dlg = QFileDialog(self, "Add library directory")
         dlg.setFileMode(QFileDialog.Directory)
         dlg.setOption(QFileDialog.ShowDirsOnly, True)
@@ -268,6 +313,7 @@ class ConfigureAnalysisWindow(QMainWindow):
 
 
     def _dir_contains_libs(self, directory: Path) -> bool:
+        """Heuristic: return True if any child file has an extension in LIB_EXTS."""
         try:
             for child in directory.iterdir():
                 if child.is_file() and child.suffix.lower() in LIB_EXTS:
@@ -276,7 +322,8 @@ class ConfigureAnalysisWindow(QMainWindow):
             pass
         return False
     
-    def _append_unique_paths(self, paths):
+    def _append_unique_paths(self, paths: Iterable[str]) -> None:
+        """Append normalized paths to the list widget, skipping duplicates."""
         current = set(self.get_shared_search_paths())
         for p in paths:
             norm = os.path.normpath(p)
@@ -286,13 +333,21 @@ class ConfigureAnalysisWindow(QMainWindow):
             self.paths_list.addItem(item)
             current.add(norm) 
 
-    def _on_remove_selected_paths(self):
+    def _on_remove_selected_paths(self) -> None:
+        """Remove all currently selected items from the search path list."""
         for item in self.paths_list.selectedItems():
             row = self.paths_list.row(item)
             self.paths_list.takeItem(row)
 
-    def _default_search_paths(self):
-        paths = []
+    def _default_search_paths(self) -> List[str]:
+        """Return a cleaned, de-duplicated list of common system library paths.
+
+        Notes:
+            - Uses platform-specific environment variables (`LD_LIBRARY_PATH`,
+              `DYLD_LIBRARY_PATH`, `PATH`) when available.
+            - Filters out non-existing directories.
+        """
+        paths: List[str] = []
         if sys.platform.startswith("linux"):
             paths += ["/lib", "/lib64", "/usr/lib", "/usr/lib64", "/usr/local/lib", "/usr/local/lib64"]
             paths += os.environ.get("LD_LIBRARY_PATH", "").split(":")
@@ -315,17 +370,25 @@ class ConfigureAnalysisWindow(QMainWindow):
             seen.add(n); cleaned.append(n)
         return cleaned
 
-    def set_shared_search_paths(self, paths):
+    def set_shared_search_paths(self, paths: Iterable[str]) -> None:
+        """Replace the current library search path list with `paths`."""
         self.paths_list.clear()
         self._append_unique_paths(paths)
 
-    def get_shared_search_paths(self):
+    def get_shared_search_paths(self) -> List[str]:
+        """Return the list of library search paths currently configured."""
         return [self.paths_list.item(i).text() for i in range(self.paths_list.count())]
 
 
-    def set_entrypoints(self, rows):
-        """
-        rows: list of dicts with keys: address(str), function(str), file(str), selected(bool)
+    def set_entrypoints(self, rows: Iterable[Dict[str, Any]]) -> None:
+        """Populate the entrypoint table.
+
+        Args:
+            rows: Iterable of dicts with keys (address, function, file, selected).
+
+        Behavior:
+            - Creates a checkable first column for selection.
+            - Makes data cells non-editable to avoid accidental edits.
         """
         self.entry_model.removeRows(0, self.entry_model.rowCount())
         for r in rows:
@@ -341,7 +404,8 @@ class ConfigureAnalysisWindow(QMainWindow):
             for it in (addr, func, src): it.setEditable(False)
             self.entry_model.appendRow([chk, addr, func, src])
 
-    def _on_header_clicked(self, section):
+    def _on_header_clicked(self, section: int) -> None:
+        """Header click handler to toggle all checkboxes when first column is clicked."""
         if section != 0:
             return
         any_unchecked = any(
@@ -350,12 +414,14 @@ class ConfigureAnalysisWindow(QMainWindow):
         )
         self.select_all_entrypoints(any_unchecked)
 
-    def select_all_entrypoints(self, checked: bool):
+    def select_all_entrypoints(self, checked: bool) -> None:
+        """Set all entrypoint checkboxes to the given state."""
         state = Qt.Checked if checked else Qt.Unchecked
         for row in range(self.entry_model.rowCount()):
             self.entry_model.item(row, 0).setCheckState(state)
 
-    def select_default_entrypoints(self):
+    def select_default_entrypoints(self) -> None:
+        """Select common entrypoints (e.g., `_start`, `main`, `DllMain`)."""
         defaults = {"_start", "main", "WinMain", "wWinMain", "DllMain"}
         any_hit = False
         for row in range(self.entry_model.rowCount()):
@@ -369,8 +435,13 @@ class ConfigureAnalysisWindow(QMainWindow):
         if not any_hit and self.entry_model.rowCount() > 0:
             self.entry_model.item(0, 0).setCheckState(Qt.Checked)
 
-    def get_selected_entrypoints(self):
-        out = []
+    def get_selected_entrypoints(self) -> List[Dict[str, str]]:
+        """Return a list of selected entrypoints as dicts.
+
+        Returns:
+            List of dicts with keys: address, function, file.
+        """
+        out: List[Dict[str, str]] = []
         for row in range(self.entry_model.rowCount()):
             if self.entry_model.item(row, 0).checkState() == Qt.Checked:
                 out.append({
@@ -380,7 +451,8 @@ class ConfigureAnalysisWindow(QMainWindow):
                 })
         return out
     
-    def _on_add_arg_pattern(self):
+    def _on_add_arg_pattern(self) -> None:
+        """Prompt for a new argument pattern and append it to the list."""
         text, ok = QInputDialog.getText(
             self, "Add Argument Pattern",
             "Pattern (e.g. -i {file} --count {int}):"
@@ -388,19 +460,39 @@ class ConfigureAnalysisWindow(QMainWindow):
         if ok and text.strip():
             self.arg_list.addItem(text.strip())
 
-    def get_arg_patterns(self):
+    def get_arg_patterns(self) -> List[str]:
+        """Return all user-specified CLI argument patterns."""
         return [self.arg_list.item(i).text() for i in range(self.arg_list.count())]
 
     # Behavior
-    def on_back(self):
+    def on_back(self) -> None:
+        """Default handler for the **Back** button (closes the window)."""
         print("[Back] returning to previous screen…")
         self.close()
 
-    def on_start(self):
+    def on_start(self) -> None:
+        """Default handler for the **Start** button (prints config to stdout).
+
+        Notes:
+            - In production, connect `start_btn.clicked` to a controller slot that
+              reads `get_config()` and kicks off the analysis engine.
+        """
         config = self.get_config()
         print("[Start] configuration:", config)
 
-    def get_config(self) -> dict:
+    def get_config(self) -> Dict[str, Any]:
+        """Collect all currently configured options across tabs.
+
+        Returns:
+            Dict with keys:
+                - "architecture": str
+                - "timeout_minutes": int
+                - "active_tab": str
+                - "entrypoints": list[dict]
+                - "lib_search_paths": list[str]
+                - "max_cli_args": int
+                - "arg_patterns": list[str]
+        """
         return {
             "architecture": self.arch_combo.currentText(),
             "timeout_minutes": self.timeout_spin.value(),

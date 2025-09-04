@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (
     QApplication, QSizePolicy, QFrame
 )
 
+from configure_analysis import ConfigureAnalysisWindow
+
 class BinLensDashboard(QWidget):
     openFileRequested = Signal()
     analyzeRequested  = Signal()

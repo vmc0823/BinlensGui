@@ -1,0 +1,188 @@
+===============================================================================
+BinLens – Documentation
+===============================================================================
+
+Project Name
+------------
+BinLens (PySide6 desktop GUI)
+
+Short Description
+-----------------
+BinLens is a code-first (no Qt Designer) PySide6 application for configuring,
+running, and monitoring binary analyses. It guides a user from setting up
+architectural parameters and library search paths, through entrypoint
+selection, all the way to a live view that streams logs and summarizes
+vulnerability categories while the analysis is still running.
+
+-------------------------------------------------------------------------------
+1) What this app achieves
+-------------------------------------------------------------------------------
+- Modern desktop UI using PySide6, built entirely in Python without .ui files.
+- Clear, step-wise workflow:
+  1. Open a binary / show dashboard.
+  2. Configure analysis (ISA, timeout, shared/static libraries, entrypoints,
+     advanced argument patterns).
+  3. Start analysis and view a live dashboard of progress and findings.
+- Reusable widgets with clean public APIs and signals to keep UI and orchestration
+  loosely coupled.
+- “Live View” while the engine runs:
+  - Status pill (Running / Paused / Complete).
+  - Indeterminate busy bar that hides automatically when analysis is complete.
+  - Tabs for Logs, Config preview (JSON), and CLI output.
+  - Vulnerability categories split into Detected / Not Detected, updated
+    incrementally without rebuilding the entire layout.
+- Cross-platform layout/styling that mirrors wireframes (rounded “cards”, pill
+  buttons, tabbed panes).
+- Sensible defaults for common library paths (Linux/macOS/Windows) and
+  “Select Default” entrypoints (e.g., _start, main, WinMain, wWinMain, DllMain).
+
+-------------------------------------------------------------------------------
+2) High-level architecture
+-------------------------------------------------------------------------------
+- Code-first widgets: no Qt Designer; all UI built in Python.
+- Separation of concerns:
+  - Widgets are responsible for presentation and emit Qt signals.
+  - A host window (controller) responds to signals, launches settings dialogs,
+    and starts/monitors the analysis engine (thread/process/subprocess).
+- Incremental UI updates where useful (e.g., vulnerability cards) to keep the
+  interface responsive for long-running analyses.
+
+-------------------------------------------------------------------------------
+3) Key components
+-------------------------------------------------------------------------------
+A) ConfigureAnalysisWindow (configure_analysis.py)
+   - Purpose: Collect all pre-run settings before starting the engine.
+   - Tabs:
+     • General: Instruction Set Architecture + Analysis Timeout (minutes).
+     • Shared Objects: Add/remove search directories for dynamic/static libs
+       (.so, .dylib, .dll, .a, .lib). Provides platform-aware defaults
+       (LD_LIBRARY_PATH / DYLD_LIBRARY_PATH / PATH).
+     • Entrypoints: Table with checkboxes; Select All; Select Default; click the
+       first header column to toggle all.
+     • Advanced: Max number of CLI arguments and free-form argument patterns.
+   - Public API:
+     • get_config() → dict {architecture, timeout_minutes, entrypoints,
+       lib_search_paths, max_cli_args, arg_patterns, active_tab}
+     • set_entrypoints(rows), get_selected_entrypoints()
+     • set_shared_search_paths(paths), get_shared_search_paths()
+   - Notes: Implemented as QMainWindow (can be converted to QDialog if desired).
+
+B) BinLensDashboard + BinLensMainWindow (BinLens_Dashboard.py)
+   - Purpose: Post-login landing page and controller host that wires actions.
+   - UI: Open File, Analyze, Settings; function list placeholder; center welcome
+     card; lower Status/Logs tabs; right-side Analysis Results panel.
+   - Signals from dashboard:
+     • openFileRequested
+     • analyzeRequested
+     • settingsRequested
+   - MainWindow roles:
+     • Opens files and seeds function list (demo data in code).
+     • Opens ConfigureAnalysisWindow and consumes its config.
+     • Switches to Logs when analysis starts.
+
+C) AnalysisLiveWidget (live_view/analysis_live_view.py)
+   - Purpose: Show run-time status and a summary of vulnerabilities while the
+     analysis engine executes.
+   - Features:
+     • Status header (“Analyzing <filename>”, “Paused”, “Complete”).
+     • Status pill (color-coded) and a busy bar that hides when complete.
+     • Tabs: Logs (table), Config (JSON preview), CLI (plain text).
+     • Vulnerability categories: Detected / Not Detected with rounded cards.
+       Incremental updates: bump_category(name, detected=True/False, by=1).
+     • Optional trimming of log rows to avoid unbounded growth.
+   - Public API:
+     • set_running(bool), mark_complete(message="Analysis complete.")
+     • set_status_line(str)
+     • set_config_preview(dict)
+     • append_cli_output(str)
+     • append_log(severity, message, ts=None, max_rows=2000)
+     • bump_category(name, detected=True, by=1)
+     • clear_categories(), set_categories(detected=None, not_detected=None)
+   - Signals:
+     • categoryClicked(str) – forwarded from each CategoryCard for consumers to
+       filter or drill down.
+
+-------------------------------------------------------------------------------
+4) Styling and UX notes
+-------------------------------------------------------------------------------
+- A consistent, light stylesheet: rounded group boxes and pill-style buttons.
+- Tabs mirror the wireframes; headers and spacing tuned for readability.
+- The status pill is non-interactive (visual indicator only).
+- Busy bar: indeterminate QProgressBar (0, 0) shown when running and hidden on
+  mark_complete().
+- Table header click (Entrypoints tab, first column) toggles all checkboxes.
+
+-------------------------------------------------------------------------------
+5) Data flow (typical run)
+-------------------------------------------------------------------------------
+1. User launches BinLensMainWindow (dashboard).
+2. User clicks “Settings” → controller opens ConfigureAnalysisWindow (modeless or modal).
+3. User tweaks options, clicks “Start”.
+4. Controller reads win.get_config() and starts the analysis engine.
+5. Engine (worker thread/process) streams updates back to the UI thread by
+   emitting signals or using QMetaObject.invokeMethod:
+   - append_log(), append_cli_output(), set_config_preview(), bump_category().
+6. When finished, controller calls mark_complete() on AnalysisLiveWidget.
+
+-------------------------------------------------------------------------------
+6) Files and folders
+-------------------------------------------------------------------------------
+- main.py
+  Minimal launcher: opens ConfigureAnalysisWindow and prints the config.
+
+- BinLens_Dashboard.py
+  Dashboard widget and main window host. Wires “Open File”, “Analyze”, “Settings”.
+
+- configure_analysis.py
+  Multi-tab settings window (General / Shared Objects / Entrypoints / Advanced).
+  Exposes get_config() for the controller.
+
+- live_view/analysis_live_view.py
+  AnalysisLiveWidget (live runtime view). Handles incremental category updates.
+
+- docs/screenshots/
+  Optional PNGs used by README.md.
+
+- README.md
+  Landing page for the repository (project overview, setup, usage).
+
+- LICENSE (recommended)
+  MIT or your chosen license.
+
+-------------------------------------------------------------------------------
+7) Platform support
+-------------------------------------------------------------------------------
+- Designed for Python 3.9+ and PySide6 (6.6+ recommended).
+- Windows, macOS, Linux. On Linux, you may need additional Qt platform libs
+  (e.g., libxcb* packages).
+
+-------------------------------------------------------------------------------
+8) How to run (quick commands)
+-------------------------------------------------------------------------------
+# Configure window only
+python main.py --target /path/to/binary
+
+# Full dashboard host
+python BinLens_Dashboard.py
+
+# Live view demo
+python live_view/analysis_live_view.py
+
+-------------------------------------------------------------------------------
+9) Known limitations / future ideas
+-------------------------------------------------------------------------------
+- Entrypoint discovery currently uses demo data; integrate with a real disassembler.
+- Logs use QTableWidget; consider a QAbstractTableModel for large streams.
+- Persist last-used configuration between sessions.
+- Add filters/search for functions and categories.
+- Optional modal settings dialog (convert to QDialog + exec()).
+
+-------------------------------------------------------------------------------
+10) License & contributions
+-------------------------------------------------------------------------------
+License: MIT (or your chosen license).
+Contributions: This project is not accepting external contributions at this time.
+
+===============================================================================
+End of Document
+===============================================================================

@@ -18,20 +18,17 @@ BinLens is a PySide6 desktop app for **configuring, running, and monitoring** bi
 
 ## Project Structure
 
+```text
 .
-├─ main.py                     # launcher for ConfigureAnalysisWindow
-├─ BinLens_Dashboard.py        # dashboard + main window host
-├─ configure_analysis.py       # multi-tab settings window
+├─ main.py                  # launcher for ConfigureAnalysisWindow
+├─ BinLens_Dashboard.py     # dashboard + main window host
+├─ configure_analysis.py    # multi-tab settings window
 ├─ live_view/
-│  ├─ analysis_live_view.py    # AnalysisLiveWidget (live run view)
-│  └─ __init__.py              # (optional) makes this a package
+│  ├─ analysis_live_view.py # AnalysisLiveWidget (live run view)
+│  └─ __init__.py           # optional, makes package importable
 ├─ docs/
 │  └─ screenshots/
 │     ├─ dashboard.png
 │     ├─ configure.png
 │     └─ live_view.png
-├─ README.md                   # landing page (this file)
-├─ LICENSE                     # MIT (or your chosen license)
-├─ requirements.txt            # PySide6 etc.
-├─ pyproject.toml              # tooling config (ruff, metadata) — optional but recommended
-└─ .gitignore                  # ignore venv, build artifacts, __pycache__, etc.
+├─ README.md                # landing page

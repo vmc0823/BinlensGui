@@ -9,17 +9,30 @@ from PySide6.QtWidgets import (
 from configure_analysis import ConfigureAnalysisWindow
 
 class BinLensDashboard(QWidget):
+    """Landing panel shown after login.
+
+    Provides a sidebar with **Open File / Analyze / Settings** actions, a
+    functions list, a central welcome/status/logs area, and a right-hand
+    *Analysis Results* box (replaceable via :meth:`set_results_widget`).
+
+    Signals:
+        openFileRequested: Emitted when the **Open File** button is clicked.
+        analyzeRequested:  Emitted when the **Analyze** button is clicked.
+        settingsRequested: Emitted when the **Settings** button is clicked.
+    """
     openFileRequested = Signal()
     analyzeRequested  = Signal()
     settingsRequested = Signal()
 
     def __init__(self, parent=None):
+        """Build the dashboard UI and apply styles."""
         super().__init__(parent)
         self._build_ui()
         self._apply_styles()
 
     #helpers (public)
     def set_functions(self, names: list[str]):
+        """Populate the functions list or show a placeholder if empty."""
         self.functions.clear()
         if not names:
             self.functions.addItem("No functions to display.")
@@ -29,13 +42,15 @@ class BinLensDashboard(QWidget):
             self.functions.addItems(names)
 
     def append_log(self, line: str):
+        """Append one line of text to the **Logs** tab."""
         self.log_text.append(line)
 
     def set_status(self, text: str):
+        """Set the **Status** tab text (multi-line supported)."""
         self.status_text.setText(text)
 
     def set_results_widget(self, widget: QWidget):
-        # Swap results view
+        """Replace the right-hand results area with a custom widget."""
         for i in reversed(range(self.results_box_layout.count())):
             old = self.results_box_layout.itemAt(i).widget()
             if old:
@@ -44,6 +59,7 @@ class BinLensDashboard(QWidget):
 
     #ui
     def _build_ui(self):
+        """Create all widgets/layouts (no side effects beyond UI)."""
         root = QHBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
 
@@ -132,6 +148,7 @@ class BinLensDashboard(QWidget):
         self.btn_settings.clicked.connect(self.settingsRequested.emit)
 
     def _hline(self):
+        """Utility: a thin horizontal line used in the welcome card."""
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Plain)
@@ -153,7 +170,16 @@ class BinLensDashboard(QWidget):
         """)
 
 class BinLensMainWindow(QMainWindow):
+    """Thin host window that embeds :class:`BinLensDashboard`.
+
+    Responsibilities:
+        - Holds minimal app state (current file, settings dialog ref).
+        - Wires dashboard signals to handlers.
+        - Opens :class:`ConfigureAnalysisWindow` modelessly and logs its config.
+        - A natural place to start/monitor the analysis engine.
+    """
     def __init__(self):
+        """Create the main window, set up the dashboard, and wire events."""
         super().__init__()
         self.setWindowTitle("BinLens")
         self.resize(1150, 720)
@@ -175,6 +201,7 @@ class BinLensMainWindow(QMainWindow):
 
     #handlers
     def _on_open_file(self):
+        """Open a file dialog, set title, and (for now) seed demo functions."""
         path, _ = QFileDialog.getOpenFileName(self, "Open binary", "", "All files (*)")
         if not path:
             return
@@ -187,13 +214,14 @@ class BinLensMainWindow(QMainWindow):
         self.dashboard.set_functions(demo_functions)
 
     def _on_analyze(self):
+        """Switch to Logs tab and start analysis (controller hook)."""
         self.dashboard.bottom_tabs.setCurrentIndex(1)  # show Logs
         self.dashboard.append_log("[INFO] Analysis started…")
         self.dashboard.set_status("Running symbolic explorer…")
         # TODO: start analysis thread/pipeline and stream logs back
 
     def _on_open_settings(self):
-        #reuse an existing modeless dialog or create a new one
+        """Open or focus a modeless ConfigureAnalysisWindow for the current file."""
         if self._settings_dlg and not self._settings_dlg.isHidden():
             self._settings_dlg.raise_()
             self._settings_dlg.activateWindow()

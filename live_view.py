@@ -10,9 +10,15 @@ import sys
 from datetime import datetime
 
 class CategoryCard(QFrame):
+    """Small rounded card showing a vulnerability category and its count.
+
+    Emits:
+        clicked(str): The category name when the card is clicked.
+    """
     clicked = Signal(str)
 
     def __init__(self, name: str, count: int = 0, parent=None):
+        """Create a card with the given name and starting count."""
         super().__init__(parent)
         self._name = name
         self._count = count
@@ -27,18 +33,33 @@ class CategoryCard(QFrame):
         self.setCursor(Qt.PointingHandCursor)
 
     def mouseReleaseEvent(self, e):
+        """Forward clicks as a signal with the category name."""
         self.clicked.emit(self._name)
         return super().mouseReleaseEvent(e)
 
     def set_count(self, n: int):
+        """Update the displayed count."""
         self._count = n
         self._refresh()
 
     def _refresh(self):
+        """Refresh the text shown on the card."""
         self.title.setText(f"<b>{self._name}</b> ({self._count})")
 
 
 class AnalysisLiveWidget(QWidget):
+    """Live analysis view (status, logs, config/CLI, and vulnerability buckets).
+
+    Left panel:
+        - Status line, read-only status pill (Running/Paused/Complete), and a busy bar
+          (indeterminate progress; hidden when analysis completes).
+        - Tabs: **Logs** (table), **Config** (JSON pretty-print), **CLI** (plain text).
+    Right panel:
+        - Two grids of :class:`CategoryCard`: **Detected** and **Not Detected**.
+
+    Signals:
+        categoryClicked(str): Emitted when a category card is clicked.
+    """
     _TITLE_PT = 12
     _GRID_COLS = 2
     _BUSY_HEIGHT = 6
@@ -46,6 +67,7 @@ class AnalysisLiveWidget(QWidget):
     categoryClicked = Signal(str)
 
     def __init__(self, filename: str = "filename", parent=None):
+        """Initialize the view for a given filename (display only)."""
         super().__init__(parent)
         self.filename = filename
         self._categories_detected = {}      
@@ -57,6 +79,7 @@ class AnalysisLiveWidget(QWidget):
 
     #public API
     def set_running(self, running: bool):
+        """Show the running/paused state (title, pill color/text, busy bar)."""
         self._set_state(
             title="Analyzing" if running else "Paused",
             pill_text="Running" if running else "Paused",
@@ -65,7 +88,7 @@ class AnalysisLiveWidget(QWidget):
         )
 
     def mark_complete(self, message: str = "Analysis complete."):
-        """Call when your analysis engine finishes."""
+        """Mark the view as complete, hide the busy bar, and set a final message."""
         self.set_status_line(message)
         self._set_state(
             title="Complete",
@@ -75,15 +98,19 @@ class AnalysisLiveWidget(QWidget):
         )
 
     def set_status_line(self, text: str):
+        """Update the single-line status label at the top-left box."""
         self.status_line.setText(text)
 
     def set_config_preview(self, cfg: dict):
+        """Pretty-print the configuration used for this run in the Config tab."""
         self.cfg_edit.setPlainText(json.dumps(cfg, indent=2))
 
     def append_cli_output(self, text: str):
+        """Append one line of text to the CLI tab."""
         self.cli_edit.appendPlainText(text)
 
     def append_log(self, severity: str, message: str, ts: datetime | None = None, *, max_rows: int | None = 2000):
+        """Append a row to the logs table, trimming oldest rows if `max_rows` is reached."""
         ts = ts or datetime.now()
         row = self.log_table.rowCount()
         if max_rows is not None and row >= max_rows:
@@ -96,6 +123,7 @@ class AnalysisLiveWidget(QWidget):
         self.log_table.scrollToBottom()
 
     def bump_category(self, name: str, detected: bool = True, by: int = 1):
+        """Increment a category counter and update/create its card incrementally."""
         store = self._categories_detected if detected else self._categories_not_detected
         cards = self._cards_det if detected else self._cards_not
         grid = self.detected_grid if detected else self.notdet_grid
@@ -116,7 +144,7 @@ class AnalysisLiveWidget(QWidget):
         self.notdet_box.setTitle(f"Vulnerabilities Not Detected ({sum(self._categories_not_detected.values())})")
 
     def clear_categories(self):
-        """Clear all categories and UI cards."""
+        """Clear all category data and rebuild the grids (removes all cards)."""
         self._categories_detected.clear()
         self._categories_not_detected.clear()
         self._cards_det.clear()
@@ -124,7 +152,7 @@ class AnalysisLiveWidget(QWidget):
         self._rebuild_category_grid()
 
     def set_categories(self, detected: dict | None = None, not_detected: dict | None = None):
-        """Bulk set categories; rebuilds the grids."""
+        """Bulk-set category data and rebuild the grids (useful for initial load)."""
         if detected is not None:
             self._categories_detected = dict(detected)
         if not_detected is not None:
@@ -133,6 +161,7 @@ class AnalysisLiveWidget(QWidget):
 
     #ui
     def _build_ui(self):
+        """Create widgets and layout for both panels (left/right)."""
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 8, 10, 10)
         root.setSpacing(8)
@@ -253,7 +282,7 @@ class AnalysisLiveWidget(QWidget):
 
     #helpers
     def _set_pill(self, text: str, color: str):
-        """Update the read-only status pill."""
+        """Update the read-only status pill text and background color."""
         self.status_pill.setText(text)
         self.status_pill.setAlignment(Qt.AlignCenter)
         self.status_pill.setStyleSheet(
@@ -262,25 +291,28 @@ class AnalysisLiveWidget(QWidget):
         )
 
     def _set_title(self, prefix: str):
+        """Set the title above the split view (includes sanitized filename)."""
         self.status_header.setText(f"<b>{prefix} &lt;{self.filename}&gt;</b>")
 
     def _time_fmt(self) -> str:
-        # centralize platform format logic
+        """Return a platform-appropriate timestamp format for the logs table."""
         return "%-I:%M:%S %p" if sys.platform != "win32" else "%I:%M:%S %p"
 
     def _clear_layout(self, layout):
-        # Remove widgets but keep the layout instance
+        """Remove all widgets from a layout (preserving the layout instance)."""
         for i in reversed(range(layout.count())):
             w = layout.itemAt(i).widget()
             if w:
                 w.setParent(None)
 
     def _set_state(self, *, title: str, pill_text: str, pill_color: str, busy: bool):
+        """Atomically update title, pill, and busy bar visibility."""
         self._set_title(title)
         self._set_pill(pill_text, pill_color)
         self.busy.setVisible(busy)
 
     def _rebuild_category_grid(self):
+        """Recreate both category grids from current data (bulk refresh)."""
         self._clear_layout(self.detected_grid)
         self._clear_layout(self.notdet_grid)
         self._cards_det.clear()

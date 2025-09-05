@@ -26,9 +26,4 @@ BinLens is a PySide6 desktop app for **configuring, running, and monitoring** bi
 ├─ live_view/
 │  ├─ analysis_live_view.py # AnalysisLiveWidget (live run view)
 │  └─ __init__.py           # optional, makes package importable
-├─ docs/
-│  └─ screenshots/
-│     ├─ dashboard.png
-│     ├─ configure.png
-│     └─ live_view.png
 ├─ README.md                # landing page
